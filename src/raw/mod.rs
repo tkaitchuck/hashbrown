@@ -26,12 +26,14 @@ fn unlikely(b: bool) -> bool {
 // Use the SSE2 implementation if possible: it allows us to scan 16 buckets at
 // once instead of 8.
 #[cfg(all(
+    not(stage0),
     target_feature = "sse2",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[path = "sse2.rs"]
 mod imp;
 #[cfg(not(all(
+    not(stage0),
     target_feature = "sse2",
     any(target_arch = "x86", target_arch = "x86_64")
 )))]
