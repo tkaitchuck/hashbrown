@@ -905,7 +905,6 @@ where
         unsafe {
             let hash = make_hash(&self.hash_builder, &k);
             if let Some(item) = self.table.find(hash, |x| k.eq(x.0.borrow())) {
-                // Erase the element from the table first since drop might panic.
                 self.table.erase_no_drop(&item);
                 Some(item.read())
             } else {
@@ -1575,7 +1574,6 @@ impl<'a, K, V> RawOccupiedEntryMut<'a, K, V> {
     /// Take the ownership of the key and value from the map.
     pub fn remove_entry(self) -> (K, V) {
         unsafe {
-            // Erase the element from the table first since drop might panic.
             self.table.erase_no_drop(&self.elem);
             self.elem.read()
         }
@@ -1663,7 +1661,7 @@ pub enum Entry<'a, K: 'a, V: 'a, S: 'a> {
     Vacant(VacantEntry<'a, K, V, S>),
 }
 
-impl<'a, K: 'a + Debug + Eq + Hash, V: 'a + Debug, S: BuildHasher> Debug for Entry<'a, K, V, S> {
+impl<'a, K: 'a + Debug + Eq + Hash, V: 'a + Debug, S: 'a> Debug for Entry<'a, K, V, S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Vacant(ref v) => f.debug_tuple("Entry").field(v).finish(),
@@ -1716,7 +1714,7 @@ pub struct VacantEntry<'a, K: 'a, V: 'a, S: 'a> {
     table: &'a mut HashMap<K, V, S>,
 }
 
-impl<'a, K: 'a + Debug + Eq + Hash, V: 'a, S: 'a + BuildHasher> Debug for VacantEntry<'a, K, V, S> {
+impl<'a, K: 'a + Debug + Eq + Hash, V: 'a, S> Debug for VacantEntry<'a, K, V, S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_tuple("VacantEntry").field(self.key()).finish()
     }
@@ -1966,7 +1964,7 @@ where
     }
 }
 
-impl<'a, K: Eq + Hash, V, S: BuildHasher> Entry<'a, K, V, S> {
+impl<'a, K, V, S> Entry<'a, K, V, S> {
     /// Ensures a value is in the entry by inserting the default if empty, and returns
     /// a mutable reference to the value in the entry.
     ///
@@ -1984,7 +1982,11 @@ impl<'a, K: Eq + Hash, V, S: BuildHasher> Entry<'a, K, V, S> {
     /// assert_eq!(map["poneyland"], 6);
     /// ```
     #[inline]
-    pub fn or_insert(self, default: V) -> &'a mut V {
+    pub fn or_insert(self, default: V) -> &'a mut V
+    where
+        K: Hash,
+        S: BuildHasher,
+    {
         match self {
             Occupied(entry) => entry.into_mut(),
             Vacant(entry) => entry.insert(default),
@@ -2007,7 +2009,11 @@ impl<'a, K: Eq + Hash, V, S: BuildHasher> Entry<'a, K, V, S> {
     /// assert_eq!(map["poneyland"], "hoho".to_string());
     /// ```
     #[inline]
-    pub fn or_insert_with<F: FnOnce() -> V>(self, default: F) -> &'a mut V {
+    pub fn or_insert_with<F: FnOnce() -> V>(self, default: F) -> &'a mut V
+    where
+        K: Hash,
+        S: BuildHasher,
+    {
         match self {
             Occupied(entry) => entry.into_mut(),
             Vacant(entry) => entry.insert(default()),
@@ -2067,7 +2073,7 @@ impl<'a, K: Eq + Hash, V, S: BuildHasher> Entry<'a, K, V, S> {
     }
 }
 
-impl<'a, K: Eq + Hash, V: Default, S: BuildHasher> Entry<'a, K, V, S> {
+impl<'a, K, V: Default, S> Entry<'a, K, V, S> {
     /// Ensures a value is in the entry by inserting the default value if empty,
     /// and returns a mutable reference to the value in the entry.
     ///
@@ -2084,7 +2090,11 @@ impl<'a, K: Eq + Hash, V: Default, S: BuildHasher> Entry<'a, K, V, S> {
     /// # }
     /// ```
     #[inline]
-    pub fn or_default(self) -> &'a mut V {
+    pub fn or_default(self) -> &'a mut V
+    where
+        K: Hash,
+        S: BuildHasher,
+    {
         match self {
             Occupied(entry) => entry.into_mut(),
             Vacant(entry) => entry.insert(Default::default()),
@@ -2130,7 +2140,6 @@ impl<'a, K, V, S> OccupiedEntry<'a, K, V, S> {
     #[inline]
     pub fn remove_entry(self) -> (K, V) {
         unsafe {
-            // Erase the element from the table first since drop might panic.
             self.table.table.erase_no_drop(&self.elem);
             self.elem.read()
         }
@@ -2323,7 +2332,7 @@ impl<'a, K, V, S> OccupiedEntry<'a, K, V, S> {
     }
 }
 
-impl<'a, K: 'a + Eq + Hash, V: 'a, S: BuildHasher> VacantEntry<'a, K, V, S> {
+impl<'a, K: 'a, V: 'a, S> VacantEntry<'a, K, V, S> {
     /// Gets a reference to the key that would be used when inserting a value
     /// through the `VacantEntry`.
     ///
@@ -2376,7 +2385,11 @@ impl<'a, K: 'a + Eq + Hash, V: 'a, S: BuildHasher> VacantEntry<'a, K, V, S> {
     /// assert_eq!(map["poneyland"], 37);
     /// ```
     #[inline]
-    pub fn insert(self, value: V) -> &'a mut V {
+    pub fn insert(self, value: V) -> &'a mut V
+    where
+        K: Hash,
+        S: BuildHasher,
+    {
         let hash_builder = &self.table.hash_builder;
         let bucket = self.table.table.insert(self.hash, (self.key, value), |x| {
             make_hash(hash_builder, &x.0)
@@ -2431,6 +2444,7 @@ where
     V: Copy,
     S: BuildHasher,
 {
+    #[inline]
     fn extend<T: IntoIterator<Item = (&'a K, &'a V)>>(&mut self, iter: T) {
         self.extend(iter.into_iter().map(|(&key, &value)| (key, value)));
     }

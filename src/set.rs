@@ -1467,7 +1467,9 @@ where
             }
         }
 
-        let visitor = SeqVisitor { marker: PhantomData };
+        let visitor = SeqVisitor {
+            marker: PhantomData,
+        };
         deserializer.deserialize_seq(visitor)
     }
 
@@ -1546,8 +1548,8 @@ fn assert_covariance() {
 
 #[cfg(test)]
 mod test_set {
-    use super::HashSet;
     use super::super::map::DefaultHashBuilder;
+    use super::HashSet;
     use std::vec::Vec;
 
     #[test]
