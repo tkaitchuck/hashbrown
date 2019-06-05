@@ -626,8 +626,8 @@ where
     /// down no lower than the supplied limit while maintaining the internal rules
     /// and possibly leaving some space in accordance with the resize policy.
     ///
-    /// Panics if the current capacity is smaller than the supplied
-    /// minimum capacity.
+    /// This function does nothing if the current capacity is smaller than the
+    /// supplied minimum capacity.
     ///
     /// # Examples
     ///
@@ -642,14 +642,11 @@ where
     /// assert!(map.capacity() >= 10);
     /// map.shrink_to(0);
     /// assert!(map.capacity() >= 2);
+    /// map.shrink_to(10);
+    /// assert!(map.capacity() >= 2);
     /// ```
     #[inline]
     pub fn shrink_to(&mut self, min_capacity: usize) {
-        assert!(
-            self.capacity() >= min_capacity,
-            "Tried to shrink to a larger capacity"
-        );
-
         let hash_builder = &self.hash_builder;
         self.table
             .shrink_to(min_capacity, |x| make_hash(hash_builder, &x.0));
@@ -1121,6 +1118,11 @@ pub struct IterMut<'a, K, V> {
     // To ensure invariance with respect to V
     marker: PhantomData<(&'a K, &'a mut V)>,
 }
+
+// We override the default Send impl which has K: Sync instead of K: Send. Both
+// are correct, but this one is more general since it allows keys which
+// implement Send but not Sync.
+unsafe impl<K: Send, V: Send> Send for IterMut<'_, K, V> {}
 
 impl<K, V> IterMut<'_, K, V> {
     /// Returns a iterator of references over the remaining items.
@@ -1646,8 +1648,8 @@ impl<'a, K, V, S> RawVacantEntryMut<'a, K, V, S> {
     {
         unsafe {
             let elem = self.table.insert(hash, (key, value), |x| hasher(&x.0));
-            let &mut (ref mut key, ref mut value) = elem.as_mut();
-            (key, value)
+            let &mut (ref mut k, ref mut v) = elem.as_mut();
+            (k, v)
         }
     }
 }
@@ -2436,9 +2438,9 @@ where
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
         let iter = iter.into_iter();
         let mut map = Self::with_capacity_and_hasher(iter.size_hint().0, S::default());
-        for (k, v) in iter {
+        iter.for_each(|(k, v)| {
             map.insert(k, v);
-        }
+        });
         map
     }
 }
@@ -2461,9 +2463,9 @@ where
             (iter.size_hint().0 + 1) / 2
         };
         self.reserve(reserve);
-        for (k, v) in iter {
+        iter.for_each(move |(k, v)| {
             self.insert(k, v);
-        }
+        });
     }
 }
 

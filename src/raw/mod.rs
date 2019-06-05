@@ -118,11 +118,8 @@ fn special_is_empty(ctrl: u8) -> bool {
 #[inline]
 #[allow(clippy::cast_possible_truncation)]
 fn h1(hash: u64) -> usize {
-    #[cfg(target_pointer_width = "32")]
-    {
-        debug_assert!(hash <= u64::from(u32::max_value()));
-    }
-    hash as usize // truncation
+    // On 32-bit platforms we simply ignore the higher hash bits.
+    hash as usize
 }
 
 /// Secondary hash function, saved in the low 7 bits of the control byte.
@@ -145,7 +142,7 @@ fn h2(hash: u64) -> u8 {
 /// (skipping over 1 group), then 3 groups (skipping over 2 groups), and so on.
 ///
 /// Proof that the probe will visit every group in the table:
-/// https://fgiesen.wordpress.com/2015/02/22/triangular-numbers-mod-2n/
+/// <https://fgiesen.wordpress.com/2015/02/22/triangular-numbers-mod-2n/>
 struct ProbeSeq {
     bucket_mask: usize,
     pos: usize,
@@ -176,6 +173,8 @@ impl Iterator for ProbeSeq {
 ///
 /// Returns `None` if an overflow occurs.
 #[inline]
+// Workaround for emscripten bug emscripten-core/emscripten-fastcomp#258
+#[cfg_attr(target_os = "emscripten", inline(never))]
 fn capacity_to_buckets(cap: usize) -> Option<usize> {
     let adjusted_cap = if cap < 8 {
         // Need at least 1 free bucket on small tables
@@ -298,7 +297,7 @@ impl<T> Bucket<T> {
         } else {
             self.ptr.add(offset)
         };
-        Bucket { ptr }
+        Self { ptr }
     }
     #[inline]
     pub unsafe fn drop(&self) {
@@ -321,7 +320,7 @@ impl<T> Bucket<T> {
         &mut *self.as_ptr()
     }
     #[inline]
-    pub unsafe fn copy_from_nonoverlapping(&self, other: Bucket<T>) {
+    pub unsafe fn copy_from_nonoverlapping(&self, other: &Self) {
         self.as_ptr().copy_from_nonoverlapping(other.as_ptr(), 1);
     }
 }
@@ -358,7 +357,8 @@ impl<T> RawTable<T> {
     pub fn new() -> Self {
         Self {
             data: NonNull::dangling(),
-            ctrl: NonNull::from(&Group::static_empty()[0]),
+            // Be careful to cast the entire slice to a raw pointer.
+            ctrl: unsafe { NonNull::new_unchecked(Group::static_empty().as_ptr() as *mut u8) },
             bucket_mask: 0,
             items: 0,
             growth_left: 0,
@@ -602,9 +602,7 @@ impl<T> RawTable<T> {
         };
 
         // If we have more buckets than we need, shrink the table.
-        if min_buckets != self.buckets() {
-            debug_assert!(min_buckets < self.buckets());
-
+        if min_buckets < self.buckets() {
             // Fast path if the table is empty
             if self.items == 0 {
                 *self = Self::with_capacity(min_size)
@@ -745,7 +743,7 @@ impl<T> RawTable<T> {
                         // element into the new slot and clear the old control
                         // byte.
                         guard.set_ctrl(i, EMPTY);
-                        guard.bucket(new_i).copy_from_nonoverlapping(item);
+                        guard.bucket(new_i).copy_from_nonoverlapping(&item);
                         continue 'outer;
                     } else {
                         // If the target slot is occupied, swap the two elements
@@ -802,7 +800,7 @@ impl<T> RawTable<T> {
                 // - all elements are unique.
                 let index = new_table.find_insert_slot(hash);
                 new_table.set_ctrl(index, h2(hash));
-                new_table.bucket(index).copy_from_nonoverlapping(item);
+                new_table.bucket(index).copy_from_nonoverlapping(&item);
             }
 
             // We successfully copied all elements without panicking. Now replace
@@ -935,12 +933,12 @@ impl<T> RawTable<T> {
     /// should be dropped using a `RawIter` before freeing the allocation.
     #[inline]
     pub fn into_alloc(self) -> Option<(NonNull<u8>, Layout)> {
-        let alloc = if !self.is_empty_singleton() {
+        let alloc = if self.is_empty_singleton() {
+            None
+        } else {
             let (layout, _) = calculate_layout::<T>(self.buckets())
                 .unwrap_or_else(|| unsafe { hint::unreachable_unchecked() });
             Some((self.ctrl.cast(), layout))
-        } else {
-            None
         };
         mem::forget(self);
         alloc
